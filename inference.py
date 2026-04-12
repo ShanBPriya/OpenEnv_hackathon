@@ -1,156 +1,198 @@
+#!/usr/bin/env python3
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# All rights reserved.
+#
+# This source code is licensed under the BSD-style license found in the
+# LICENSE file in the root directory of this source tree.
+
+import argparse
 import asyncio
-import os
-import json
-from typing import List, Optional
+import random
+from typing import Any, List
 
-from openai import OpenAI
-from pydantic import ValidationError
-from email_env1 import EmailEnv, EmailAction
-
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-API_KEY = os.getenv("HF_API_KEY") or os.getenv("OPENAI_API_KEY")
-IMAGE_NAME = os.getenv("IMAGE_NAME", "email_env:latest")
-
-MAX_STEPS = 10
-
-
-def log_start(task, env, model):
-    print(f"[START] task={task} env={env} model={model}", flush=True)
-
-
-def log_step(step, action, reward, done, error):
-    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error or 'null'}", flush=True)
-
-
-def log_end(success, steps, score, rewards):
-    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
-    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
-
-
-SYSTEM_PROMPT = """You are an email assistant. Output valid JSON actions with action_type one of: list_emails, read_email, classify_email, reply_email, archive_email.
-Include relevant fields like email_id, category, reply_content as needed. For example:
-{"action_type": "list_emails"}
-{"action_type": "read_email", "email_id": "1"}
-{"action_type": "classify_email", "email_id": "1", "category": "work"}
-{"action_type": "reply_email", "email_id": "1", "reply_content": "Thank you"}
-{"action_type": "archive_email", "email_id": "1"}"""
-
-
-
-def get_action(client, obs):
-    try:
-        res = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(obs)},
-            ],
-            temperature=0.3,
-        )
-        return json.loads(res.choices[0].message.content)
-    except Exception as exc:
-        print(f"[ERROR] get_action failed: {exc}", flush=True)
-        return {"action_type": "list_emails"}
-
-
-def normalize_action_dict(action_dict):
-    if not isinstance(action_dict, dict):
-        return {"action_type": "list_emails"}
-
-    normalized = dict(action_dict)
-    if "action" in normalized and "action_type" not in normalized:
-        normalized["action_type"] = normalized.pop("action")
-
-    # Map common model outputs to valid action_types
-    action_mapping = {
-        "categorize": "classify_email",
-        "categorize_emails": "classify_email",
-        "search_email": "list_emails",
-        "search_emails": "list_emails",
-        "read": "read_email",
-        "classify": "classify_email",
-        "reply": "reply_email",
-        "archive": "archive_email",
-    }
-    if normalized.get("action_type") in action_mapping:
-        normalized["action_type"] = action_mapping[normalized["action_type"]]
-
-    # Normalize categories
-    category_mapping = {
-        "urgent": "important",
-        "important": "important",
-        "spam": "spam",
-        "promotion": "promotion",
-        "promotions": "promotion",
-        "work": "important",
-        "personal": "important",
-    }
-    if "category" in normalized and normalized["category"] in category_mapping:
-        normalized["category"] = category_mapping[normalized["category"]]
-
-    # Ensure action_type is valid, else fallback
-    valid_actions = {"list_emails", "read_email", "classify_email", "reply_email", "archive_email"}
-    if normalized.get("action_type") not in valid_actions:
-        normalized["action_type"] = "list_emails"
-
-    allowed_keys = {"action_type", "email_id", "category", "reply_content"}
-    return {k: v for k, v in normalized.items() if k in allowed_keys}
-
-
-async def main():
-    if not API_KEY:
-        raise EnvironmentError(
-            "HF_API_KEY or OPENAI_API_KEY is required. "
-            "Set HF_API_KEY to your Hugging Face API token before running."
-        )
-
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-    env = await EmailEnv.from_docker_image(IMAGE_NAME)
-
-    rewards = []
-    steps = 0
-    success = False
-
-    log_start("email_triage", "email_env", MODEL_NAME)
-
-    try:
-        result = await env.reset()
-
-        for step in range(1, MAX_STEPS + 1):
-            if result.done:
-                break
-
-            obs = result.observation.model_dump()
-            action_dict = normalize_action_dict(get_action(client, obs))
-            try:
-                action = EmailAction(**action_dict)
-            except ValidationError as exc:
-                print(f"[ERROR] invalid action payload: {action_dict} -> {exc}", flush=True)
-                action = EmailAction(action_type="list_emails")
-
-            result = await env.step(action)
-
-            reward = result.reward or 0.0
-            rewards.append(reward)
-            steps = step
-
-            log_step(step, str(action_dict), reward, result.done, None)
-
-            if result.done:
-                break
-
-        # Use the final reward from environment if done, else sum rewards / 10
-        if result.done and result.reward is not None:
-            score = result.reward
-        else:
-            score = min(max(sum(rewards) / 10.0, 0.0), 1.0)
-        success = score > 0.6
-
-    finally:
-        await env.close()
-        log_end(success, steps, score, rewards)
-
-
-if __name__ == "__main__":
+from email_environ import EmailAction, EmailEnv
+  
+  
+# Configuration constants  
+MAX_EPISODE_STEPS = 25  
+SUCCESS_SCORE_THRESHOLD = 0.7  
+MAX_TOTAL_REWARD = 10.0  # Maximum possible reward per episode  
+  
+  
+def log_start(task_name: str, episode_id: str):  
+    """Log the start of an episode."""  
+    print(f"[START] Task: {task_name}, Episode: {episode_id}", flush=True)  
+  
+  
+def log_step(step: int, action_type: str, reward: float, done: bool):  
+    """Log each step."""  
+    print(f"[STEP {step}] Action: {action_type}, Reward: {reward:.3f}, Done: {done}", flush=True)  
+  
+  
+def log_end(success: bool, steps: int, score: float, rewards: List[float]):  
+    """Log the end of an episode."""  
+    total_reward = sum(rewards)
+    avg_reward = (total_reward / len(rewards)) if rewards else 0.0
+    print(f"[END] Success: {success}, Steps: {steps}, Score: {score:.3f}", flush=True)  
+    print(f"[REWARDS] Total: {total_reward:.3f}, Avg: {avg_reward:.3f}", flush=True)  
+  
+  
+async def run_episode(env: EmailEnv, task_name: str, episode_id: str) -> tuple[bool, int, float, List[float]]:  
+    """Run a single episode of the email environment."""  
+    log_start(task_name, episode_id)  
+      
+    # Reset environment with specific task  
+    result = await env.reset(task_name=task_name)  
+    obs = result.observation  
+    steps_taken = 0  
+    rewards = []  
+      
+    # Simple agent logic - you can replace this with your actual agent  
+    while not result.done and steps_taken < MAX_EPISODE_STEPS:  
+        steps_taken += 1  
+          
+        # Choose action based on task and current state  
+        action = await choose_action(env, obs, task_name, steps_taken)  
+          
+        # Execute action  
+        result = await env.step(action)  
+        obs = result.observation  
+        reward = result.reward or 0.0  
+        rewards.append(reward)  
+          
+        log_step(steps_taken, action.action_type, reward, result.done)  
+          
+        if result.done:  
+            break  
+      
+    return False, steps_taken, 0.0, rewards  
+  
+  
+async def choose_action(env: EmailEnv, obs: Any, task_name: str, step: int) -> EmailAction:  
+    """Simple action selection logic - replace with your agent."""  
+    emails = obs.emails or []  
+      
+    if task_name == "basic_triage":  
+        # Classify unclassified emails  
+        unclassified = [e for e in emails if not e.get("category")]  
+        if unclassified:  
+            email = unclassified[0]  
+            # Simple heuristic based on subject  
+            if "spam" in email.get("subject", "").lower() or "sale" in email.get("subject", "").lower():  
+                category = "spam"  
+            elif "urgent" in email.get("subject", "").lower() or "meeting" in email.get("subject", "").lower():  
+                category = "important"  
+            else:  
+                category = "promotion"  
+              
+            return EmailAction(  
+                action_type="classify_email",  
+                email_id=email["id"],  
+                category=category  
+            )  
+      
+    elif task_name == "thread_management":  
+        # Analyze threads and schedule follow-ups  
+        if step <= 5:  
+            # First, list and read emails  
+            if emails:  
+                return EmailAction(action_type="list_emails")  
+        else:  
+            # Schedule follow-up for high priority emails  
+            high_priority = [e for e in emails if e.get("priority") == "high"]  
+            if high_priority:  
+                return EmailAction(  
+                    action_type="schedule_followup",  
+                    followup_email_id=high_priority[0]["id"],  
+                    followup_delay=24,  
+                    followup_message="Following up on this important email"  
+                )  
+      
+    elif task_name == "advanced_workflow":  
+        # Complete workflow: organize, draft, auto-respond  
+        if step == 1:  
+            return EmailAction(action_type="organize_emails")  
+        elif step == 2:  
+            return EmailAction(  
+                action_type="draft_email",  
+                draft_recipient="team@company.com",  
+                draft_subject="Weekly Update",  
+                draft_content="Here's our weekly progress update...",  
+                tone="professional"  
+            )  
+        elif step == 3:  
+            return EmailAction(action_type="auto_respond")  
+      
+    # Default action  
+    return EmailAction(action_type="list_emails")  
+  
+  
+async def main():  
+    """Main inference loop."""  
+    parser = argparse.ArgumentParser(description="Email Environment Inference")  
+    parser.add_argument("--base-url", default="ws://localhost:8000", help="Environment server URL")  
+    parser.add_argument("--episodes", type=int, default=10, help="Number of episodes to run")  
+    parser.add_argument("--task", choices=["basic_triage", "thread_management", "advanced_workflow", "random"],   
+                       default="random", help="Task to run")  
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")  
+      
+    args = parser.parse_args()  
+      
+    # Set random seed  
+    random.seed(args.seed)  
+      
+    # Task selection  
+    tasks = ["basic_triage", "thread_management", "advanced_workflow"]  
+    if args.task == "random":  
+        task_sequence = [random.choice(tasks) for _ in range(args.episodes)]  
+    else:  
+        task_sequence = [args.task] * args.episodes  
+      
+    print(f"[INFO] Starting {args.episodes} episodes with tasks: {task_sequence}", flush=True)  
+      
+    # Statistics  
+    total_successes = 0  
+    total_episodes = 0  
+    all_scores = []  
+      
+    for episode_idx in range(args.episodes):  
+        task_name = task_sequence[episode_idx]  
+        episode_id = f"ep_{episode_idx}_{task_name}"  
+          
+        env = EmailEnv(base_url=args.base_url)  
+          
+        try:  
+            success, steps_taken, score, rewards = await run_episode(env, task_name, episode_id)  
+              
+            # Calculate final score using your logic  
+            score = sum(rewards) / MAX_TOTAL_REWARD if MAX_TOTAL_REWARD > 0 else 0.0  
+            score = min(max(score, 0.0), 1.0)  # clamp to [0, 1]  
+            success = score >= SUCCESS_SCORE_THRESHOLD  
+              
+            total_successes += 1 if success else 0  
+            total_episodes += 1  
+            all_scores.append(score)  
+              
+        except Exception as e:  
+            print(f"[ERROR] Episode {episode_id} failed: {e}", flush=True)  
+            success = False  
+            steps_taken = 0  
+            score = 0.0  
+            rewards = []  
+          
+        finally:  
+            try:  
+                await env.close()  
+            except Exception as e:  
+                print(f"[DEBUG] env.close() error (container cleanup): {e}", flush=True)  
+            log_end(success=success, steps=steps_taken, score=score, rewards=rewards)  
+      
+    # Final statistics  
+    if total_episodes > 0:  
+        success_rate = total_successes / total_episodes  
+        avg_score = sum(all_scores) / len(all_scores)  
+        print(f"\n[SUMMARY] Episodes: {total_episodes}, Success Rate: {success_rate:.2%}, Avg Score: {avg_score:.3f}", flush=True)  
+  
+  
+if __name__ == "__main__":  
     asyncio.run(main())

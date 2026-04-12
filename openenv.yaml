@@ -1,6 +1,37 @@
-spec_version: 1
-name: email_env
-type: space
-runtime: fastapi
-app: server.app:app
-port: 8000
+name: email_environ
+title: Email Management Environment  
+description: Advanced email triage and management environment with drafting, organizing, and scheduling capabilities  
+version: 0.1.0  
+  
+# Environment metadata  
+tags:  
+  - email  
+  - nlp  
+  - productivity  
+  - workflow  
+  
+# Task definitions  
+tasks:  
+  - name: basic_triage  
+    description: Classify incoming emails into categories  
+    difficulty: easy  
+      
+  - name: thread_management  
+    description: Analyze email threads and schedule follow-ups  
+    difficulty: medium  
+      
+  - name: advanced_workflow  
+    description: Complete email workflow with drafting and auto-responses  
+    difficulty: hard  
+  
+# Docker configuration  
+docker:  
+  context: .  
+  dockerfile: dockerfile
+  port: 8000  
+  
+# Model definitions  
+models:  
+  action: models.EmailAction  
+  observation: models.EmailObservation  
+  state: models.EmailState

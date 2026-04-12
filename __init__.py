@@ -4,13 +4,9 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 
-"""Email Env Environment."""
-
-from .client import EmailEnv
-from .models import EmailAction, EmailObservation
-
-__all__ = [
-    "EmailAction",
-    "EmailObservation",
-    "EmailEnv",
-]
+"""Email Environment for OpenEnv."""  
+  
+from .models import EmailAction, EmailObservation, EmailState  
+from .client import EmailEnv  
+  
+__all__ = ["EmailAction", "EmailObservation", "EmailState", "EmailEnv"]

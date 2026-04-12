@@ -9,7 +9,7 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "openenv-email_env"
+name = "email_environ"
 version = "0.1.0"
 description = "Email Env environment for OpenEnv"
 requires-python = ">=3.10"
@@ -37,9 +37,9 @@ dev = [
 [project.scripts]
 # Server entry point - enables running via: uv run --project . server
 # or: python -m email_env.server.app
-server = "email_env.server.app:main"
+server = "email_environ.server.app:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["email_env", "email_env.server"]
-package-dir = { "email_env" = ".", "email_env.server" = "server" }
+packages = ["email_environ", "email_environ.server"]
+package-dir = { "email_environ" = ".", "email_environ.server" = "server" }

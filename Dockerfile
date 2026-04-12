@@ -22,7 +22,7 @@ RUN apt-get update && \
 
 # Build argument to control whether we're building standalone or in-repo
 ARG BUILD_MODE=in-repo
-ARG ENV_NAME=email_env
+ARG ENV_NAME=email_environ
 
 # Copy environment code (always at root of build context)
 COPY . /app/env
@@ -38,21 +38,13 @@ RUN if ! command -v uv >/dev/null 2>&1; then \
         mv /root/.local/bin/uvx /usr/local/bin/uvx; \
     fi
     
-# Install dependencies using uv sync
-# If uv.lock exists, use it; otherwise resolve on the fly
+# Install dependencies using uv sync.
+# Resolve dynamically to avoid stale lock metadata across renames.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ -f uv.lock ]; then \
-        uv sync --frozen --no-install-project --no-editable; \
-    else \
-        uv sync --no-install-project --no-editable; \
-    fi
+    uv sync --no-install-project --no-editable
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    if [ -f uv.lock ]; then \
-        uv sync --frozen --no-editable; \
-    else \
-        uv sync --no-editable; \
-    fi
+    uv sync --no-editable
 
 # Final runtime stage
 FROM ${BASE_IMAGE}
